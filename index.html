@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 小朋友過馬路小遊戲 | Teachable Machine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Noto+Sans+TC:wght@500;700;900&display=swap" rel="stylesheet">
+    
+    <!-- TensorFlow.js and Teachable Machine Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.3/dist/teachablemachine-image.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Fredoka', 'Noto Sans TC', sans-serif;
+            background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 50%, #7dd3fc 100%);
+            touch-action: manipulation;
+        }
+        .custom-shadow {
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        }
+        .pulse-slow {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.85; transform: scale(0.98); }
+        }
+        canvas {
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body class="min-h-screen text-slate-800 flex flex-col p-2 md:p-4">
+
+    <header class="max-w-7xl w-full mx-auto mb-3 flex flex-wrap justify-between items-center bg-white/90 backdrop-blur rounded-2xl p-3 md:px-6 shadow-md border-2 border-sky-200">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 md:w-12 md:h-12 bg-amber-400 rounded-full flex items-center justify-center text-white text-xl md:text-2xl shadow-inner border-2 border-amber-300">
+                <i class="fa-solid fa-child-reaching"></i>
+            </div>
+            <div>
+                <h1 class="text-xl md:text-2xl font-black text-sky-900 tracking-wide">AI 小朋友過馬路</h1>
+                <p class="text-xs md:text-sm text-sky-600 font-bold">Teachable Machine 體感控制小遊戲</p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2 mt-2 sm:mt-0">
+            <span class="text-xs bg-sky-100 text-sky-800 px-3 py-1.5 rounded-full font-bold flex items-center gap-1.5 border border-sky-300">
+                <i class="fa-solid fa-keyboard text-amber-500"></i> 支援方向鍵 ↑ ↓ 測試
+            </span>
+        </div>
+    </header>
+
+    <main class="max-w-7xl w-full mx-auto flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+        <section class="lg:col-span-5 flex flex-col gap-4">
+            
+            <!-- Webcam & AI Controls Card -->
+            <div class="bg-white rounded-3xl p-4 shadow-lg border-4 border-sky-100 flex flex-col items-center">
+                <div class="w-full flex justify-between items-center mb-2 px-1">
+                    <h2 class="font-extrabold text-slate-700 text-base flex items-center gap-2">
+                        <i class="fa-solid fa-camera text-sky-500"></i> AI 鏡頭動作辨識
+                    </h2>
+                    <span id="ai-status-badge" class="px-2.5 py-0.5 text-xs font-bold rounded-full bg-slate-100 text-slate-500 border border-slate-300">
+                        未啟動
+                    </span>
+                </div>
+
+                <!-- Webcam Video Box -->
+                <div class="relative w-full aspect-video bg-slate-900 rounded-2xl overflow-hidden shadow-inner border-2 border-slate-200 flex items-center justify-center">
+                    <div id="webcam-container" class="w-full h-full flex items-center justify-center">
+                        <div id="cam-placeholder" class="text-center p-4 text-slate-400">
+                            <i class="fa-solid fa-video-slash text-4xl mb-2 text-slate-500"></i>
+                            <p class="text-sm font-bold">點擊下方按鈕開啟鏡頭</p>
+                        </div>
+                    </div>
+
+                    <!-- Overlay Loading Indicator -->
+                    <div id="ai-loading-overlay" class="hidden absolute inset-0 bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center text-white p-4">
+                        <i class="fa-solid fa-circle-notch fa-spin text-4xl text-sky-400 mb-3"></i>
+                        <p id="ai-loading-text" class="text-sm font-bold text-sky-200">正在載入 AI 模型...</p>
+                    </div>
+
+                    <!-- Current Detected Action Floating Badge -->
+                    <div id="active-action-badge" class="absolute bottom-2 left-2 bg-slate-900/85 backdrop-blur text-white text-xs px-3 py-1.5 rounded-xl border border-white/20 flex items-center gap-2 hidden">
+                        <span id="active-action-icon" class="text-lg"><i class="fa-solid fa-hand"></i></span>
+                        <div>
+                            <div class="text-[10px] text-slate-300">目前辨識姿態</div>
+                            <div id="active-action-name" class="font-bold text-amber-300">不移動</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Controls -->
+                <div class="w-full flex gap-2 mt-3">
+                    <button id="btn-start-ai" onclick="initAI()" class="flex-1 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-extrabold py-2.5 px-4 rounded-2xl shadow-md transition transform active:scale-95 flex items-center justify-center gap-2 text-sm">
+                        <i class="fa-solid fa-power-off"></i> 啟動 AI 視訊控制
+                    </button>
+                    <button id="btn-toggle-cam" onclick="toggleWebcam()" disabled class="bg-slate-200 text-slate-600 font-extrabold py-2.5 px-3 rounded-2xl transition flex items-center justify-center gap-1 text-sm disabled:opacity-50">
+                        <i class="fa-solid fa-pause"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-3xl p-4 shadow-lg border-4 border-sky-100 flex flex-col gap-3">
+                
+                <!-- Game Gesture Rules Card -->
+                <div class="bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl p-3 border-2 border-amber-200 shadow-sm">
+                    <h3 class="font-extrabold text-amber-900 text-sm mb-2 flex items-center gap-2">
+                        <i class="fa-solid fa-gamepad text-amber-600"></i> 🎮 遊戲手勢規則
+                    </h3>
+                    <ul class="space-y-1.5 text-xs text-amber-950 font-medium">
+                        <li class="flex items-center gap-2">
+                            <span class="w-5 h-5 rounded-full bg-emerald-500 text-white font-bold flex items-center justify-center text-[10px]">1</span>
+                            <span>靠近盡頭比出 <strong class="text-emerald-700">1</strong>：向前移動 (Class 2)</span>
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-5 h-5 rounded-full bg-rose-500 text-white font-bold flex items-center justify-center text-[10px]">5</span>
+                            <span>比出 <strong class="text-rose-700">5</strong>：倒退 (Class 3)</span>
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-5 h-5 rounded-full bg-slate-400 text-white font-bold flex items-center justify-center text-[10px]">🛑</span>
+                            <span>沒有比（手放下）：不移動 (Class 1)</span>
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Confidence Bars Section -->
+                <div>
+                    <h3 class="font-extrabold text-slate-700 text-xs mb-2 flex items-center gap-2">
+                        <i class="fa-solid fa-chart-simple text-amber-500"></i> 模型類別預測機率 (Confidence)
+                    </h3>
+
+                    <div class="space-y-2">
+                        <!-- Class 1: Idle -->
+                        <div class="bg-slate-50 p-2 rounded-xl border border-slate-200">
+                            <div class="flex justify-between items-center mb-1 text-[11px] font-bold">
+                                <span class="text-slate-600 flex items-center gap-1.5">
+                                    <span class="w-2 h-2 rounded-full bg-slate-400 inline-block"></span>
+                                    Class 1 : 不移動
+                                </span>
+                                <span id="prob-val-0" class="text-slate-700">0%</span>
+                            </div>
+                            <div class="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                                <div id="prob-bar-0" class="bg-slate-400 h-full w-0% transition-all duration-150"></div>
+                            </div>
+                        </div>
+
+                        <!-- Class 2: Forward -->
+                        <div class="bg-emerald-50 p-2 rounded-xl border border-emerald-200">
+                            <div class="flex justify-between items-center mb-1 text-[11px] font-bold">
+                                <span class="text-emerald-700 flex items-center gap-1.5">
+                                    <span class="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+                                    Class 2 : 前進 (比1)
+                                </span>
+                                <span id="prob-val-1" class="text-emerald-700">0%</span>
+                            </div>
+                            <div class="w-full bg-emerald-100 h-2.5 rounded-full overflow-hidden">
+                                <div id="prob-bar-1" class="bg-emerald-500 h-full w-0% transition-all duration-150"></div>
+                            </div>
+                        </div>
+
+                        <!-- Class 3: Backward -->
+                        <div class="bg-rose-50 p-2 rounded-xl border border-rose-200">
+                            <div class="flex justify-between items-center mb-1 text-[11px] font-bold">
+                                <span class="text-rose-700 flex items-center gap-1.5">
+                                    <span class="w-2 h-2 rounded-full bg-rose-500 inline-block"></span>
+                                    Class 3 : 倒退 (比5)
+                                </span>
+                                <span id="prob-val-2" class="text-rose-700">0%</span>
+                            </div>
+                            <div class="w-full bg-rose-100 h-2.5 rounded-full overflow-hidden">
+                                <div id="prob-bar-2" class="bg-rose-500 h-full w-0% transition-all duration-150"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <section class="lg:col-span-7 flex flex-col">
+            <div class="bg-white rounded-3xl p-3 md:p-4 shadow-lg border-4 border-sky-100 flex flex-col items-center h-full">
+                
+                <!-- Game Scoreboard Bar -->
+                <div class="w-full bg-gradient-to-r from-sky-500 to-indigo-600 rounded-2xl p-3 text-white mb-3 flex flex-wrap justify-between items-center shadow-md">
+                    <div class="flex items-center gap-4">
+                        <!-- Lives Hearts -->
+                        <div class="flex flex-col">
+                            <span class="text-[10px] text-sky-200 uppercase tracking-wider font-extrabold">生命值</span>
+                            <div id="lives-container" class="flex gap-1 text-lg text-rose-400">
+                                <i class="fa-solid fa-heart drop-shadow"></i>
+                                <i class="fa-solid fa-heart drop-shadow"></i>
+                                <i class="fa-solid fa-heart drop-shadow"></i>
+                            </div>
+                        </div>
+
+                        <!-- Current Level -->
+                        <div class="flex flex-col border-l border-white/20 pl-4">
+                            <span class="text-[10px] text-sky-200 uppercase tracking-wider font-extrabold">目前關卡</span>
+                            <span id="level-display" class="font-black text-xl text-amber-300">LEVEL 1</span>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-4 mt-2 sm:mt-0">
+                        <!-- Score -->
+                        <div class="flex flex-col text-right">
+                            <span class="text-[10px] text-sky-200 uppercase tracking-wider font-extrabold">過馬路得分</span>
+                            <span id="score-display" class="font-black text-2xl text-white tracking-wider">0000</span>
+                        </div>
+
+                        <!-- High Score -->
+                        <div class="flex flex-col text-right border-l border-white/20 pl-4">
+                            <span class="text-[10px] text-sky-200 uppercase tracking-wider font-extrabold">最高紀錄</span>
+                            <span id="high-score-display" class="font-black text-lg text-amber-200">0000</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Canvas Wrapper -->
+                <div class="relative w-full flex-1 min-h-[420px] max-h-[600px] rounded-2xl overflow-hidden shadow-inner bg-slate-800 border-2 border-slate-300 flex items-center justify-center">
+                    <canvas id="gameCanvas" class="w-full h-full block bg-emerald-600 cursor-pointer"></canvas>
+
+                    <!-- Game Start Overlay -->
+                    <div id="game-start-overlay" class="absolute inset-0 bg-slate-900/75 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center text-white">
+                        <div class="w-16 h-16 bg-amber-400 text-slate-900 rounded-full flex items-center justify-center text-3xl mb-3 shadow-lg border-4 border-amber-200 pulse-slow">
+                            <i class="fa-solid fa-play ml-1"></i>
+                        </div>
+                        <h2 class="text-2xl font-black text-amber-300 mb-1">準備好過馬路了嗎？</h2>
+                        <p class="text-sm text-sky-100 max-w-md mb-5">請參考左側手勢規則，比出 1 向前移動、比出 5 倒退，避開車輛安全抵達頂部草地！</p>
+                        <button onclick="startGame()" class="bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-slate-900 font-black text-lg px-8 py-3 rounded-2xl shadow-xl transition transform active:scale-95 border-2 border-amber-200">
+                            開始遊戲 (Start Game)
+                        </button>
+                    </div>
+
+                    <!-- Game Over Overlay -->
+                    <div id="game-over-overlay" class="hidden absolute inset-0 bg-slate-900/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center text-white">
+                        <div class="w-16 h-16 bg-rose-500 text-white rounded-full flex items-center justify-center text-3xl mb-3 shadow-lg border-4 border-rose-300 animate-bounce">
+                            <i class="fa-solid fa-heart-crack"></i>
+                        </div>
+                        <h2 class="text-3xl font-black text-rose-400 mb-1">GAME OVER</h2>
+                        <p class="text-sm text-slate-300 mb-4">小心車輛！調整手勢再挑戰一次！</p>
+                        
+                        <div class="bg-white/10 rounded-2xl p-4 w-64 mb-6 border border-white/20 space-y-2">
+                            <div class="flex justify-between text-sm">
+                                <span class="text-slate-300">本次得分：</span>
+                                <span id="final-score" class="font-bold text-amber-300 text-base">0</span>
+                            </div>
+                            <div class="flex justify-between text-sm">
+                                <span class="text-slate-300">最高分紀錄：</span>
+                                <span id="final-highscore" class="font-bold text-emerald-300 text-base">0</span>
+                            </div>
+                        </div>
+
+                        <button onclick="startGame()" class="bg-gradient-to-r from-emerald-400 to-teal-500 hover:from-emerald-500 hover:to-teal-600 text-white font-black text-lg px-8 py-3 rounded-2xl shadow-xl transition transform active:scale-95 border-2 border-emerald-200">
+                            再試一次 (Play Again)
+                        </button>
+                    </div>
+
+                    <!-- Countdown Overlay (Used for Respawn & Level Up) -->
+                    <div id="countdown-overlay" class="hidden absolute inset-0 bg-slate-900/60 backdrop-blur-xs flex flex-col items-center justify-center text-white pointer-events-none">
+                        <div id="countdown-title" class="bg-amber-400 text-slate-900 font-black px-6 py-2 rounded-full shadow-lg border-2 border-amber-200 text-sm mb-2 flex items-center gap-2 animate-bounce">
+                            <i class="fa-solid fa-triangle-exclamation"></i> 準備過馬路...
+                        </div>
+                        <div id="countdown-number" class="text-6xl font-black text-white drop-shadow-[0_4px_8px_rgba(0,0,0,0.5)]">
+                            2
+                        </div>
+                    </div>
+                </div>
+
+                <!-- On-Screen Touch Controls for Mobile Testing -->
+                <div class="w-full flex justify-center gap-4 mt-3 sm:hidden">
+                    <button id="btn-touch-up" class="bg-sky-500 active:bg-sky-700 text-white font-bold py-3 px-8 rounded-2xl text-xl shadow">
+                        <i class="fa-solid fa-arrow-up"></i> 前進
+                    </button>
+                    <button id="btn-touch-down" class="bg-slate-500 active:bg-slate-700 text-white font-bold py-3 px-8 rounded-2xl text-xl shadow">
+                        <i class="fa-solid fa-arrow-down"></i> 倒退
+                    </button>
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+
+            if (type === 'step') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(220, now);
+                osc.frequency.exponentialRampToValueAtTime(440, now + 0.08);
+                gain.gain.setValueAtTime(0.08, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.08);
+                osc.start(now);
+                osc.stop(now + 0.08);
+            } else if (type === 'hit') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(180, now);
+                osc.frequency.linearRampToValueAtTime(60, now + 0.25);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+                osc.start(now);
+                osc.stop(now + 0.25);
+            } else if (type === 'win') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(440, now);
+                osc.frequency.setValueAtTime(554.37, now + 0.1); // C#5
+                osc.frequency.setValueAtTime(659.25, now + 0.2); // E5
+                osc.frequency.setValueAtTime(880, now + 0.3);    // A5
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.5);
+                osc.start(now);
+                osc.stop(now + 0.5);
+            } else if (type === 'gameover') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(300, now);
+                osc.frequency.linearRampToValueAtTime(100, now + 0.6);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.6);
+                osc.start(now);
+                osc.stop(now + 0.6);
+            }
+        }
+    </script>
+
+    <script>
+        const TM_URL = "https://teachablemachine.withgoogle.com/models/-Wy-t8_IX/";
+        let model, webcam, maxPredictions;
+        let isAiActive = false;
+        let isCamPaused = false;
+        let currentAiCommand = 0; // 0: Idle, 1: Forward, 2: Backward
+        const CONFIDENCE_THRESHOLD = 0.75;
+
+        async function initAI() {
+            const btnStart = document.getElementById("btn-start-ai");
+            const btnToggle = document.getElementById("btn-toggle-cam");
+            const loadingOverlay = document.getElementById("ai-loading-overlay");
+            const loadingText = document.getElementById("ai-loading-text");
+            const statusBadge = document.getElementById("ai-status-badge");
+
+            btnStart.disabled = true;
+            loadingOverlay.classList.remove("hidden");
+
+            try {
+                loadingText.innerText = "正在讀取 Teachable Machine 模型...";
+                const modelURL = TM_URL + "model.json";
+                const metadataURL = TM_URL + "metadata.json";
+
+                model = await tmImage.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+
+                loadingText.innerText = "正在初始化視訊鏡頭...";
+                const flip = true;
+                webcam = new tmImage.Webcam(240, 240, flip);
+                await webcam.setup();
+                await webcam.play();
+
+                // Clear placeholder and append canvas
+                const container = document.getElementById("webcam-container");
+                container.innerHTML = "";
+                container.appendChild(webcam.canvas);
+                webcam.canvas.className = "w-full h-full object-cover rounded-2xl";
+
+                isAiActive = true;
+                btnToggle.disabled = false;
+                loadingOverlay.classList.add("hidden");
+                document.getElementById("active-action-badge").classList.remove("hidden");
+
+                statusBadge.className = "px-2.5 py-0.5 text-xs font-bold rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300";
+                statusBadge.innerText = "AI 運作中";
+                btnStart.innerHTML = `<i class="fa-solid fa-check"></i> AI 已就緒`;
+
+                window.requestAnimationFrame(aiLoop);
+            } catch (err) {
+                console.error("AI Initialization Error:", err);
+                loadingOverlay.classList.add("hidden");
+                btnStart.disabled = false;
+                alert("無法開啟鏡頭或載入 AI 模型。請確保已允許相機存取權限！");
+            }
+        }
+
+        async function aiLoop() {
+            if (isAiActive && !isCamPaused) {
+                webcam.update();
+                await predict();
+            }
+            if (isAiActive) {
+                window.requestAnimationFrame(aiLoop);
+            }
+        }
+
+        async function predict() {
+            if (!model || !webcam) return;
+            const prediction = await model.predict(webcam.canvas);
+            
+            let highestProb = 0;
+            let detectedIndex = 0;
+
+            for (let i = 0; i < maxPredictions; i++) {
+                const prob = prediction[i].probability;
+                const probPercent = Math.round(prob * 100);
+                
+                // Update UI Bars
+                const bar = document.getElementById(`prob-bar-${i}`);
+                const val = document.getElementById(`prob-val-${i}`);
+                if (bar && val) {
+                    bar.style.width = probPercent + "%";
+                    val.innerText = probPercent + "%";
+                }
+
+                if (prob > highestProb) {
+                    highestProb = prob;
+                    detectedIndex = i;
+                }
+            }
+
+            // Command trigger logic with threshold
+            if (highestProb >= CONFIDENCE_THRESHOLD) {
+                currentAiCommand = detectedIndex;
+            } else {
+                currentAiCommand = 0; // Default to idle if low confidence
+            }
+
+            // Update floating badge UI
+            const badgeName = document.getElementById("active-action-name");
+            const badgeIcon = document.getElementById("active-action-icon");
+            
+            if (currentAiCommand === 0) {
+                badgeName.innerText = "不移動 (Class 1)";
+                badgeName.className = "font-bold text-slate-300";
+                badgeIcon.innerHTML = `<i class="fa-solid fa-hand"></i>`;
+            } else if (currentAiCommand === 1) {
+                badgeName.innerText = "前進 (Class 2)";
+                badgeName.className = "font-bold text-emerald-400";
+                badgeIcon.innerHTML = `<i class="fa-solid fa-arrow-up"></i>`;
+            } else if (currentAiCommand === 2) {
+                badgeName.innerText = "倒退 (Class 3)";
+                badgeName.className = "font-bold text-rose-400";
+                badgeIcon.innerHTML = `<i class="fa-solid fa-arrow-down"></i>`;
+            }
+        }
+
+        function toggleWebcam() {
+            const btnToggle = document.getElementById("btn-toggle-cam");
+            const statusBadge = document.getElementById("ai-status-badge");
+            isCamPaused = !isCamPaused;
+
+            if (isCamPaused) {
+                webcam.pause();
+                btnToggle.innerHTML = `<i class="fa-solid fa-play"></i>`;
+                statusBadge.className = "px-2.5 py-0.5 text-xs font-bold rounded-full bg-amber-100 text-amber-700 border border-amber-300";
+                statusBadge.innerText = "已暫停";
+            } else {
+                webcam.play();
+                btnToggle.innerHTML = `<i class="fa-solid fa-pause"></i>`;
+                statusBadge.className = "px-2.5 py-0.5 text-xs font-bold rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300";
+                statusBadge.innerText = "AI 運作中";
+            }
+        }
+    </script>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // Responsive Canvas Sizing
+        function resizeCanvas() {
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Game State Variables
+        let gameState = 'START'; // 'START', 'PLAYING', 'GAMEOVER'
+        let score = 0;
+        let highScore = parseInt(localStorage.getItem('kid_road_highscore_new') || '0');
+        let level = 1;
+        let lives = 3;
+        let lastTime = 0;
+        let isPausedForCountdown = false;
+
+        // Player setup - 小朋友移動速度 (1.6 緩慢舒適)
+        const player = {
+            x: 0,
+            y: 0,
+            radius: 18,
+            speed: 1.6,
+            isInvincible: false,
+            invincibleTimer: 0,
+            stepSoundTimer: 0
+        };
+
+        // Keyboard Controls Fallback
+        const keys = {
+            ArrowUp: false,
+            ArrowDown: false,
+            KeyW: false,
+            KeyS: false
+        };
+
+        window.addEventListener("keydown", (e) => {
+            if (keys.hasOwnProperty(e.code)) keys[e.code] = true;
+        });
+        window.addEventListener("keyup", (e) => {
+            if (keys.hasOwnProperty(e.code)) keys[e.code] = false;
+        });
+
+        // Touch Control Listeners
+        const btnUp = document.getElementById("btn-touch-up");
+        const btnDown = document.getElementById("btn-touch-down");
+        let touchUpPressed = false;
+        let touchDownPressed = false;
+
+        if (btnUp && btnDown) {
+            btnUp.addEventListener("touchstart", (e) => { e.preventDefault(); touchUpPressed = true; });
+            btnUp.addEventListener("touchend", (e) => { e.preventDefault(); touchUpPressed = false; });
+            btnDown.addEventListener("touchstart", (e) => { e.preventDefault(); touchDownPressed = true; });
+            btnDown.addEventListener("touchend", (e) => { e.preventDefault(); touchDownPressed = false; });
+        }
+
+        // Road Lanes & Vehicles Setup
+        let lanes = [];
+        const vehicleTypes = [
+            { type: 'car', length: 55, height: 26, color: '#f43f5e' }, // Red Car
+            { type: 'car', length: 50, height: 26, color: '#3b82f6' }, // Blue Car
+            { type: 'bus', length: 85, height: 30, color: '#eab308' }, // Yellow Bus
+            { type: 'truck', length: 95, height: 32, color: '#8b5cf6' } // Purple Truck
+        ];
+
+        function generateLanes() {
+            lanes = [];
+            const numLanes = 5; // 5 traffic lanes
+            const roadTop = canvas.height * 0.18;
+            const roadBottom = canvas.height * 0.82;
+            const roadHeight = roadBottom - roadTop;
+            const laneHeight = roadHeight / numLanes;
+
+            for (let i = 0; i < numLanes; i++) {
+                const dir = i % 2 === 0 ? 1 : -1; // Alternate directions
+                // 車輛速度平緩 (0.7 ~ 1.5) 隨關卡微幅提升
+                const speed = (0.7 + Math.random() * 0.8 + (level * 0.2)) * dir;
+                const laneY = roadTop + i * laneHeight + laneHeight / 2;
+
+                const vehicles = [];
+                const vehicleCount = 2 + Math.floor(Math.random() * 2);
+                const spacing = canvas.width / vehicleCount;
+
+                for (let j = 0; j < vehicleCount; j++) {
+                    const template = vehicleTypes[Math.floor(Math.random() * vehicleTypes.length)];
+                    vehicles.push({
+                        x: j * spacing + Math.random() * 50,
+                        y: laneY,
+                        width: template.length,
+                        height: template.height,
+                        color: template.color,
+                        speed: speed,
+                        dir: dir
+                    });
+                }
+
+                lanes.push({
+                    y: laneY,
+                    height: laneHeight,
+                    vehicles: vehicles
+                });
+            }
+        }
+
+        function resetPlayerPosition() {
+            player.x = canvas.width / 2;
+            player.y = canvas.height - 35; // Start at bottom safe sidewalk
+        }
+
+        function triggerInvincibility() {
+            player.isInvincible = true;
+            player.invincibleTimer = 90; // ~1.5s at 60fps
+        }
+
+        function startCountdown(titleText, callback) {
+            isPausedForCountdown = true;
+            let counter = 2;
+
+            const overlay = document.getElementById("countdown-overlay");
+            const titleEl = document.getElementById("countdown-title");
+            const numberEl = document.getElementById("countdown-number");
+            
+            titleEl.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${titleText}`;
+            numberEl.innerText = counter;
+            overlay.classList.remove("hidden");
+
+            const timer = setInterval(() => {
+                counter--;
+                if (counter > 0) {
+                    numberEl.innerText = counter;
+                    playSound('step');
+                } else {
+                    clearInterval(timer);
+                    overlay.classList.add("hidden");
+                    isPausedForCountdown = false;
+                    if (callback) callback();
+                }
+            }, 1000);
+        }
+
+        function updateLivesUI() {
+            const container = document.getElementById("lives-container");
+            container.innerHTML = "";
+            for (let i = 0; i < 3; i++) {
+                if (i < lives) {
+                    container.innerHTML += `<i class="fa-solid fa-heart drop-shadow"></i>`;
+                } else {
+                    container.innerHTML += `<i class="fa-regular fa-heart opacity-40"></i>`;
+                }
+            }
+        }
+
+        function updateScoreUI() {
+            document.getElementById("score-display").innerText = String(score).padStart(4, '0');
+            document.getElementById("high-score-display").innerText = String(highScore).padStart(4, '0');
+            document.getElementById("level-display").innerText = `LEVEL ${level}`;
+        }
+
+        function startGame() {
+            score = 0;
+            level = 1;
+            lives = 3;
+            gameState = 'PLAYING';
+            isPausedForCountdown = false;
+
+            document.getElementById("game-start-overlay").classList.add("hidden");
+            document.getElementById("game-over-overlay").classList.add("hidden");
+            document.getElementById("countdown-overlay").classList.add("hidden");
+
+            updateLivesUI();
+            updateScoreUI();
+            resizeCanvas();
+            generateLanes();
+            resetPlayerPosition();
+
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function gameOver() {
+            gameState = 'GAMEOVER';
+            playSound('gameover');
+
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('kid_road_highscore_new', highScore);
+            }
+
+            document.getElementById("final-score").innerText = score;
+            document.getElementById("final-highscore").innerText = highScore;
+            document.getElementById("game-over-overlay").classList.remove("hidden");
+            document.getElementById("countdown-overlay").classList.add("hidden");
+            updateScoreUI();
+        }
+
+        function levelUp() {
+            score += 100 * level;
+            level++;
+            playSound('win');
+
+            if (window.confetti) {
+                confetti({
+                    particleCount: 80,
+                    spread: 70,
+                    origin: { y: 0.6 }
+                });
+            }
+
+            updateScoreUI();
+            generateLanes();
+            resetPlayerPosition();
+
+            startCountdown(`🎉 過關了！準備進入 Level ${level}...`, () => {
+                triggerInvincibility();
+            });
+        }
+
+        function update(dt) {
+            if (gameState !== 'PLAYING') return;
+
+            if (player.isInvincible) {
+                player.invincibleTimer--;
+                if (player.invincibleTimer <= 0) {
+                    player.isInvincible = false;
+                }
+            }
+
+            if (isPausedForCountdown) return;
+
+            let moveDir = 0; // -1: Up, 1: Down
+
+            // AI Decision mapping: Class 2 (index 1) = Forward (Up), Class 3 (index 2) = Backward (Down)
+            if (currentAiCommand === 1) moveDir = -1;
+            else if (currentAiCommand === 2) moveDir = 1;
+
+            // Keyboard Override / Fallback
+            if (keys.ArrowUp || keys.KeyW || touchUpPressed) moveDir = -1;
+            if (keys.ArrowDown || keys.KeyS || touchDownPressed) moveDir = 1;
+
+            if (moveDir !== 0) {
+                player.y += moveDir * player.speed;
+
+                player.stepSoundTimer++;
+                if (player.stepSoundTimer % 24 === 0) {
+                    playSound('step');
+                }
+            }
+
+            const topBoundary = 25;
+            const bottomBoundary = canvas.height - 25;
+            player.y = Math.max(topBoundary, Math.min(bottomBoundary, player.y));
+
+            // Check Win Condition
+            if (player.y <= canvas.height * 0.12) {
+                levelUp();
+                return;
+            }
+
+            // Update Vehicles & Check Collision
+            lanes.forEach(lane => {
+                lane.vehicles.forEach(vehicle => {
+                    vehicle.x += vehicle.speed;
+
+                    if (vehicle.dir === 1 && vehicle.x - vehicle.width / 2 > canvas.width + 50) {
+                        vehicle.x = -vehicle.width / 2 - 20;
+                    } else if (vehicle.dir === -1 && vehicle.x + vehicle.width / 2 < -50) {
+                        vehicle.x = canvas.width + vehicle.width / 2 + 20;
+                    }
+
+                    if (!player.isInvincible && !isPausedForCountdown && checkCollision(player, vehicle)) {
+                        handleCollision();
+                    }
+                });
+            });
+        }
+
+        function checkCollision(circle, rect) {
+            const rx = rect.x - rect.width / 2;
+            const ry = rect.y - rect.height / 2;
+            
+            const closestX = Math.max(rx, Math.min(circle.x, rx + rect.width));
+            const closestY = Math.max(ry, Math.min(circle.y, ry + rect.height));
+
+            const distanceX = circle.x - closestX;
+            const distanceY = circle.y - closestY;
+
+            const distanceSquared = (distanceX * distanceX) + (distanceY * distanceY);
+            return distanceSquared < (circle.radius * circle.radius);
+        }
+
+        function handleCollision() {
+            playSound('hit');
+            lives--;
+            updateLivesUI();
+
+            if (lives <= 0) {
+                gameOver();
+            } else {
+                resetPlayerPosition();
+                startCountdown("⚠️ 注意安全！準備重新出發...", () => {
+                    triggerInvincibility();
+                });
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const roadTop = canvas.height * 0.18;
+            const roadBottom = canvas.height * 0.82;
+
+            // 1. Sidewalks
+            ctx.fillStyle = '#10b981';
+            ctx.fillRect(0, 0, canvas.width, roadTop);
+            ctx.fillStyle = '#34d399';
+            ctx.fillRect(0, roadTop - 12, canvas.width, 12);
+
+            ctx.fillStyle = '#10b981';
+            ctx.fillRect(0, roadBottom, canvas.width, canvas.height - roadBottom);
+            ctx.fillStyle = '#34d399';
+            ctx.fillRect(0, roadBottom, canvas.width, 12);
+
+            drawTrees(ctx, roadTop, roadBottom);
+
+            // 2. Asphalt Road
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(0, roadTop, canvas.width, roadBottom - roadTop);
+
+            lanes.forEach((lane, idx) => {
+                if (idx < lanes.length - 1) {
+                    ctx.strokeStyle = '#fef08a';
+                    ctx.lineWidth = 3;
+                    ctx.setLineDash([16, 16]);
+                    ctx.beginPath();
+                    ctx.moveTo(0, lane.y + lane.height / 2);
+                    ctx.lineTo(canvas.width, lane.y + lane.height / 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            });
+
+            // 3. Vehicles
+            lanes.forEach(lane => {
+                lane.vehicles.forEach(vehicle => {
+                    drawVehicle(ctx, vehicle);
+                });
+            });
+
+            // 4. Player Avatar
+            if (!player.isInvincible || Math.floor(Date.now() / 100) % 2 === 0) {
+                drawKidPlayer(ctx, player.x, player.y, player.radius);
+            }
+        }
+
+        function drawTrees(ctx, roadTop, roadBottom) {
+            ctx.fillStyle = '#047857';
+            const treePositions = [30, 110, 200, 290, 380, 470, 560];
+            treePositions.forEach(x => {
+                ctx.beginPath();
+                ctx.arc(x, roadTop / 2, 10, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x + 40, roadBottom + (canvas.height - roadBottom) / 2, 10, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function drawVehicle(ctx, v) {
+            ctx.save();
+            ctx.translate(v.x, v.y);
+
+            const w = v.width;
+            const h = v.height;
+
+            ctx.fillStyle = 'rgba(0,0,0,0.25)';
+            ctx.fillRect(-w / 2 + 3, -h / 2 + 3, w, h);
+
+            ctx.fillStyle = v.color;
+            ctx.beginPath();
+            ctx.roundRect(-w / 2, -h / 2, w, h, 6);
+            ctx.fill();
+
+            ctx.fillStyle = '#e2e8f0';
+            ctx.beginPath();
+            ctx.roundRect(-w / 4, -h / 3, w / 2, h / 1.5, 3);
+            ctx.fill();
+
+            ctx.fillStyle = '#fef08a';
+            if (v.dir === 1) {
+                ctx.fillRect(w / 2 - 3, -h / 2 + 2, 4, 5);
+                ctx.fillRect(w / 2 - 3, h / 2 - 7, 4, 5);
+            } else {
+                ctx.fillRect(-w / 2 - 1, -h / 2 + 2, 4, 5);
+                ctx.fillRect(-w / 2 - 1, h / 2 - 7, 4, 5);
+            }
+
+            ctx.restore();
+        }
+
+        function drawKidPlayer(ctx, x, y, r) {
+            ctx.save();
+            ctx.translate(x, y);
+
+            ctx.fillStyle = 'rgba(0,0,0,0.2)';
+            ctx.beginPath();
+            ctx.ellipse(0, r * 0.8, r * 0.9, r * 0.4, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#f59e0b';
+            ctx.beginPath();
+            ctx.roundRect(-r * 0.7, -r * 0.8, r * 1.4, r * 0.8, 5);
+            ctx.fill();
+
+            ctx.fillStyle = '#38bdf8';
+            ctx.beginPath();
+            ctx.arc(0, 0, r * 0.75, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#0284c7';
+            ctx.beginPath();
+            ctx.ellipse(0, -r * 0.7, r * 0.6, r * 0.25, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function gameLoop(now) {
+            const dt = (now - lastTime) / 1000;
+            lastTime = now;
+
+            update(dt);
+            draw();
+
+            if (gameState === 'PLAYING') {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        resizeCanvas();
+        draw();
+    </script>
+</body>
+</html>
